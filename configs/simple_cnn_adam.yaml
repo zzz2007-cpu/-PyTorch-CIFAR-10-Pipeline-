@@ -1,0 +1,23 @@
+run_name: simple_cnn_adam
+seed: 42
+
+data:
+  data_dir: ./datasets
+  batch_size: 128
+  num_workers: 2
+  data_aug: false
+
+model:
+  name: simple_cnn
+
+train:
+  epochs: 20
+  output_dir: ./outputs
+
+optimizer:
+  name: adam
+  lr: 0.001
+  weight_decay: 0.0005
+
+scheduler:
+  name: none
