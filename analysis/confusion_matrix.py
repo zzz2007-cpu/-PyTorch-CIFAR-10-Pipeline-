@@ -1,10 +1,18 @@
 import argparse
 import csv
+import os
+import sys
 from pathlib import Path
+
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from data.cifar10 import build_dataloaders
 from engine.checkpoint import load_checkpoint
@@ -20,6 +28,7 @@ def parse_args():
     parser.add_argument("--num-workers", type=int, default=None)
     parser.add_argument("--output-dir", type=str, default=None)
     return parser.parse_args()
+
 
 def config_from_checkpoint(checkpoint: dict) -> dict:
     if "config" in checkpoint:
@@ -57,32 +66,37 @@ def config_from_checkpoint(checkpoint: dict) -> dict:
     }
     return deep_update(DEFAULT_CONFIG, legacy_config)
 
-def collect_predictions(model,dataloader,device):
+
+def collect_predictions(model, dataloader, device):
     model.eval()
 
-    all_targets=[]
-    all_preds=[]
+    all_targets = []
+    all_preds = []
 
-    with torch.no_gard():
-        for images,label in dataloader:
-            images=images.to(device)
-            labels=labels.to(device)
+    with torch.no_grad():
+        for images, labels in dataloader:
+            images = images.to(device)
+            labels = labels.to(device)
 
-            logits=model(images)
-            preds=torch.argmax(logits,dim=1)
+            logits = model(images)
+            preds = torch.argmax(logits, dim=1)
 
             all_targets.append(labels.cpu())
             all_preds.append(preds.cpu())
-        targets=torch.cat(all_targets).numpy()
-        preds=torch.cat(all_preds).numpy()
 
-        return targets,preds
-def build_confusion_matrix(targets,preds,num_classes:int):
-    martrix=np.zeros((num_classes,num_classes),dtype=np.int64)
+    targets = torch.cat(all_targets).numpy()
+    preds = torch.cat(all_preds).numpy()
 
-    for true_label,pred_label in zip(targets,preds):
-        martrix[true_label,pred_label]+=1
-    return martrix
+    return targets, preds
+
+
+def build_confusion_matrix(targets, preds, num_classes: int):
+    matrix = np.zeros((num_classes, num_classes), dtype=np.int64)
+
+    for true_label, pred_label in zip(targets, preds):
+        matrix[true_label, pred_label] += 1
+    return matrix
+
 
 def compute_per_class_accuracy(matrix, class_names):
     rows = []
@@ -105,6 +119,7 @@ def compute_per_class_accuracy(matrix, class_names):
 
     return rows
 
+
 def save_per_class_accuracy(rows, output_path: Path):
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
@@ -119,7 +134,8 @@ def save_per_class_accuracy(rows, output_path: Path):
                 "correct": row["correct"],
                 "total": row["total"],
                 "accuracy": f"{row['accuracy']:.6f}",
-            })   
+            })
+
 
 def plot_confusion_matrix(matrix, class_names, output_path: Path):
     plt.figure(figsize=(9, 8))
@@ -154,38 +170,6 @@ def plot_confusion_matrix(matrix, class_names, output_path: Path):
     plt.savefig(output_path, dpi=200)
     plt.close()
 
-def plot_confusion_matrix(matrix, class_names, output_path: Path):
-    plt.figure(figsize=(9, 8))
-
-    plt.imshow(matrix, interpolation="nearest", cmap="Blues")
-    plt.title("Confusion Matrix")
-    plt.colorbar()
-
-    tick_marks = np.arange(len(class_names))
-    plt.xticks(tick_marks, class_names, rotation=45, ha="right")
-    plt.yticks(tick_marks, class_names)
-
-    threshold = matrix.max() / 2
-
-    for i in range(matrix.shape[0]):
-        for j in range(matrix.shape[1]):
-            value = matrix[i, j]
-            color = "white" if value > threshold else "black"
-            plt.text(
-                j,
-                i,
-                str(value),
-                horizontalalignment="center",
-                verticalalignment="center",
-                color=color,
-                fontsize=8,
-            )
-
-    plt.ylabel("True Label")
-    plt.xlabel("Predicted Label")
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=200)
-    plt.close()
 
 def main():
     args = parse_args()
@@ -195,9 +179,13 @@ def main():
     checkpoint = load_checkpoint(str(checkpoint_path), device)
     cfg = config_from_checkpoint(checkpoint)
 
-    data_dir = args.data_dir or cfg["data"]["data_dir"]
-    batch_size = args.batch_size or cfg["data"]["batch_size"]
-    num_workers = args.num_workers or cfg["data"]["num_workers"]
+    data_dir = args.data_dir if args.data_dir is not None else cfg["data"]["data_dir"]
+    batch_size = (
+        args.batch_size if args.batch_size is not None else cfg["data"]["batch_size"]
+    )
+    num_workers = (
+        args.num_workers if args.num_workers is not None else cfg["data"]["num_workers"]
+    )
 
     if args.output_dir is None:
         output_dir = checkpoint_path.parent

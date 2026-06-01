@@ -28,7 +28,42 @@ def build_transforms(data_aug: bool):
     return train_transform, test_transform
 
 
-def build_dataloaders(data_dir: str, batch_size: int, num_workers: int, data_aug: bool):
+def apply_label_noise(dataset, noise_rate: float, seed: int):
+    if not 0.0 <= noise_rate <= 1.0:
+        raise ValueError(f"label_noise_rate must be in [0, 1], got {noise_rate}")
+
+    num_samples = len(dataset.targets)
+    num_noisy = int(num_samples * noise_rate)
+    if num_noisy == 0:
+        return dataset
+
+    generator = torch.Generator().manual_seed(seed)
+    noisy_indices = torch.randperm(num_samples, generator=generator)[:num_noisy]
+    targets = torch.tensor(dataset.targets, dtype=torch.long)
+    num_classes = len(dataset.classes)
+
+    replacement = torch.randint(
+        low=0,
+        high=num_classes - 1,
+        size=(num_noisy,),
+        generator=generator,
+    )
+    original = targets[noisy_indices]
+    replacement += (replacement >= original).long()
+    targets[noisy_indices] = replacement
+
+    dataset.targets = targets.tolist()
+    return dataset
+
+
+def build_dataloaders(
+    data_dir: str,
+    batch_size: int,
+    num_workers: int,
+    data_aug: bool,
+    label_noise_rate: float = 0.0,
+    label_noise_seed: int = 42,
+):
     train_transform, test_transform = build_transforms(data_aug)
 
     train_dataset = datasets.CIFAR10(
@@ -37,6 +72,7 @@ def build_dataloaders(data_dir: str, batch_size: int, num_workers: int, data_aug
         download=True,
         transform=train_transform,
     )
+    apply_label_noise(train_dataset, label_noise_rate, label_noise_seed)
 
     test_dataset = datasets.CIFAR10(
         root=data_dir,

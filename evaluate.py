@@ -63,9 +63,13 @@ def main():
     checkpoint = load_checkpoint(args.checkpoint, device)
     cfg = config_from_checkpoint(checkpoint)
 
-    data_dir = args.data_dir or cfg["data"]["data_dir"]
-    batch_size = args.batch_size or cfg["data"]["batch_size"]
-    num_workers = args.num_workers or cfg["data"]["num_workers"]
+    data_dir = args.data_dir if args.data_dir is not None else cfg["data"]["data_dir"]
+    batch_size = (
+        args.batch_size if args.batch_size is not None else cfg["data"]["batch_size"]
+    )
+    num_workers = (
+        args.num_workers if args.num_workers is not None else cfg["data"]["num_workers"]
+    )
 
     _, val_loader, class_names = build_dataloaders(
         data_dir=data_dir,

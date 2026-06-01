@@ -1,16 +1,21 @@
 import argparse
 import csv
+import sys
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
 from torchvision.utils import save_image
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from data.cifar10 import CIFAR10_MEAN, CIFAR10_STD, build_dataloaders
 from engine.checkpoint import load_checkpoint
 from models.factory import build_model
 from utils.config import DEFAULT_CONFIG, deep_update
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Export bad cases for CIFAR-10 checkpoint")
@@ -21,6 +26,7 @@ def parse_args():
     parser.add_argument("--output-dir", type=str, default=None)
     parser.add_argument("--max-per-class", type=int, default=20)
     return parser.parse_args()
+
 
 def config_from_checkpoint(checkpoint: dict) -> dict:
     if "config" in checkpoint:
@@ -58,13 +64,17 @@ def config_from_checkpoint(checkpoint: dict) -> dict:
     }
     return deep_update(DEFAULT_CONFIG, legacy_config)
 
+
 def denormalize(images: torch.Tensor):
     mean = torch.tensor(CIFAR10_MEAN).view(1, 3, 1, 1)
     std = torch.tensor(CIFAR10_STD).view(1, 3, 1, 1)
     images = images.cpu() * std + mean
     return torch.clamp(images, 0.0, 1.0)
+
+
 def safe_name(name: str):
     return name.replace(" ", "_").replace("/", "_")
+
 
 def export_badcases(
     model,
@@ -85,45 +95,47 @@ def export_badcases(
     global_index = 0
 
     with torch.no_grad():
-        for images,labels in dataloader:
-            images=images.to(device)
-            labels=labels.to(device)
+        for images, labels in dataloader:
+            images = images.to(device)
+            labels = labels.to(device)
 
-            logits=model(images)
-            probs=F.softmax(logits,dim=1)
-            confidences,preds=torch.max(probs,dim=1)
+            logits = model(images)
+            probs = F.softmax(logits, dim=1)
+            confidences, preds = torch.max(probs, dim=1)
 
-            wrong_mask=preds!=labels
+            wrong_mask = preds != labels
 
-            if wrong_mask.sum().item()==0:
+            if wrong_mask.sum().item() == 0:
                 continue
-            raw_images=denormalize(images)
+            raw_images = denormalize(images)
 
             for i in range(images.size(0)):
-                if not wrong_mask[i]:
+                if not wrong_mask[i].item():
                     continue
-            true_idx = labels[i].item()
-            pred_idx = preds[i].item()
 
-            if saved_per_class[true_idx] >= max_per_class:
-                continue
-            confidence = confidences[i].item()
-            true_name = safe_name(class_names[true_idx])
-            pred_name = safe_name(class_names[pred_idx])
-            saved_per_class[true_idx] += 1
-            global_index += 1
-            filename = (
-                f"{true_name}_pred_{pred_name}_"
-                f"conf_{confidence:.2f}_{global_index:04d}.png"
-            )
-            image_path = badcase_dir / filename
-            save_image(raw_images[i], image_path)
-            rows.append({
-                "image": filename,
-                "true_label": class_names[true_idx],
-                "pred_label": class_names[pred_idx],
-                "confidence": confidence,
-            })
+                true_idx = labels[i].item()
+                pred_idx = preds[i].item()
+
+                if saved_per_class[true_idx] >= max_per_class:
+                    continue
+
+                confidence = confidences[i].item()
+                true_name = safe_name(class_names[true_idx])
+                pred_name = safe_name(class_names[pred_idx])
+                saved_per_class[true_idx] += 1
+                global_index += 1
+                filename = (
+                    f"{true_name}_pred_{pred_name}_"
+                    f"conf_{confidence:.2f}_{global_index:04d}.png"
+                )
+                image_path = badcase_dir / filename
+                save_image(raw_images[i], image_path)
+                rows.append({
+                    "image": filename,
+                    "true_label": class_names[true_idx],
+                    "pred_label": class_names[pred_idx],
+                    "confidence": confidence,
+                })
 
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
@@ -142,6 +154,7 @@ def export_badcases(
 
     return badcase_dir, csv_path, rows
 
+
 def main():
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -150,9 +163,13 @@ def main():
     checkpoint = load_checkpoint(str(checkpoint_path), device)
     cfg = config_from_checkpoint(checkpoint)
 
-    data_dir = args.data_dir or cfg["data"]["data_dir"]
-    batch_size = args.batch_size or cfg["data"]["batch_size"]
-    num_workers = args.num_workers or cfg["data"]["num_workers"]
+    data_dir = args.data_dir if args.data_dir is not None else cfg["data"]["data_dir"]
+    batch_size = (
+        args.batch_size if args.batch_size is not None else cfg["data"]["batch_size"]
+    )
+    num_workers = (
+        args.num_workers if args.num_workers is not None else cfg["data"]["num_workers"]
+    )
 
     if args.output_dir is None:
         output_dir = checkpoint_path.parent

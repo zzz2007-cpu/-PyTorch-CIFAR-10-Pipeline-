@@ -110,6 +110,8 @@ def main():
         batch_size=cfg["data"]["batch_size"],
         num_workers=cfg["data"]["num_workers"],
         data_aug=cfg["data"]["data_aug"],
+        label_noise_rate=cfg["data"].get("label_noise_rate", 0.0),
+        label_noise_seed=cfg["data"].get("label_noise_seed", cfg["seed"]),
     )
 
     model = build_model(cfg["model"]["name"], num_classes=len(class_names)).to(device)

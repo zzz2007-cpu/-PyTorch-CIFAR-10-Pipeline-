@@ -12,6 +12,8 @@ DEFAULT_CONFIG = {
         "batch_size": 128,
         "num_workers": 2,
         "data_aug": False,
+        "label_noise_rate": 0.0,
+        "label_noise_seed": 42,
     },
     "model": {
         "name": "simple_cnn",

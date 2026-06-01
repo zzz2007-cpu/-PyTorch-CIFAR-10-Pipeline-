@@ -1,6 +1,9 @@
 import argparse
 import csv
+import os
 from pathlib import  Path
+
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
 import matplotlib.pyplot as plt
 
@@ -78,10 +81,8 @@ def main():
     acc_path=output_dir/"accuracy_curve.png"
     plot_loss(epochs,train_loss,val_loss,loss_path)
     plot_accuracy(epochs,train_acc,val_acc,acc_path)
-    print(f"Saved loss curve to{loss_path}")
+    print(f"Saved loss curve to: {loss_path}")
     print(f"Saved accuracy curve to: {acc_path}")
 
 if __name__=="__main__":
     main()
-
-
