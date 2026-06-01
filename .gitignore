@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+
+datasets/
+outputs/
+outputs_test/
+
+*.pt
+*.pth
