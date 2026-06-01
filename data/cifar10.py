@@ -2,6 +2,7 @@ import torch
 from torchvision import datasets, transforms
 
 
+# CIFAR-10 three-channel mean and standard deviation.
 CIFAR10_MEAN = (0.4914, 0.4822, 0.4465)
 CIFAR10_STD = (0.2470, 0.2435, 0.2616)
 
@@ -28,32 +29,37 @@ def build_transforms(data_aug: bool):
     return train_transform, test_transform
 
 
-def apply_label_noise(dataset, noise_rate: float, seed: int):
-    if not 0.0 <= noise_rate <= 1.0:
-        raise ValueError(f"label_noise_rate must be in [0, 1], got {noise_rate}")
+def apply_label_noise(dataset, noise_rate: float, seed: int, num_classes: int = 10):
+    if noise_rate <= 0:
+        return 0
 
-    num_samples = len(dataset.targets)
-    num_noisy = int(num_samples * noise_rate)
-    if num_noisy == 0:
-        return dataset
+    if noise_rate >= 1:
+        raise ValueError("label_noise_rate should be in [0, 1).")
 
-    generator = torch.Generator().manual_seed(seed)
-    noisy_indices = torch.randperm(num_samples, generator=generator)[:num_noisy]
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+
     targets = torch.tensor(dataset.targets, dtype=torch.long)
-    num_classes = len(dataset.classes)
+    num_samples = len(targets)
+    num_noisy = int(num_samples * noise_rate)
 
-    replacement = torch.randint(
-        low=0,
-        high=num_classes - 1,
+    noisy_indices = torch.randperm(num_samples, generator=generator)[:num_noisy]
+
+    old_labels = targets[noisy_indices]
+
+    # Generate wrong labels. This avoids replacing a label with itself.
+    random_offsets = torch.randint(
+        low=1,
+        high=num_classes,
         size=(num_noisy,),
         generator=generator,
     )
-    original = targets[noisy_indices]
-    replacement += (replacement >= original).long()
-    targets[noisy_indices] = replacement
+    new_labels = (old_labels + random_offsets) % num_classes
 
+    targets[noisy_indices] = new_labels
     dataset.targets = targets.tolist()
-    return dataset
+
+    return num_noisy
 
 
 def build_dataloaders(
@@ -72,7 +78,6 @@ def build_dataloaders(
         download=True,
         transform=train_transform,
     )
-    apply_label_noise(train_dataset, label_noise_rate, label_noise_seed)
 
     test_dataset = datasets.CIFAR10(
         root=data_dir,
@@ -80,6 +85,19 @@ def build_dataloaders(
         download=True,
         transform=test_transform,
     )
+
+    num_noisy = apply_label_noise(
+        dataset=train_dataset,
+        noise_rate=label_noise_rate,
+        seed=label_noise_seed,
+        num_classes=len(train_dataset.classes),
+    )
+
+    if num_noisy > 0:
+        print(
+            f"Applied label noise: {num_noisy}/{len(train_dataset)} "
+            f"({label_noise_rate:.1%}) training labels changed."
+        )
 
     pin_memory = torch.cuda.is_available()
 
