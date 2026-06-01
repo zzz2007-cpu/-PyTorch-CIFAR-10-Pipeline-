@@ -5,30 +5,21 @@ from datetime import datetime
 from pathlib import Path
 
 import torch
-from torch import nn
-from torch import optim
+from torch import nn, optim
 
 from data.cifar10 import build_dataloaders
 from engine.checkpoint import save_checkpoint
 from engine.trainer import evaluate, train_one_epoch
-from models.simple_cnn import SimpleCNN
+from models.factory import build_model
+from utils.config import load_config
 from utils.seed import set_seed
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train SimpleCNN baseline on CIFAR-10")
-
-    parser.add_argument("--data-dir", type=str, default="./datasets")
-    parser.add_argument("--output-dir", type=str, default="./outputs")
-    parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--batch-size", type=int, default=128)
-    parser.add_argument("--num-workers", type=int, default=2)
-    parser.add_argument("--lr", type=float, default=0.05)
-    parser.add_argument("--momentum", type=float, default=0.9)
-    parser.add_argument("--weight-decay", type=float, default=5e-4)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--data-aug", action="store_true")
+    parser = argparse.ArgumentParser(description="Train CIFAR-10 classifier")
+    parser.add_argument("--config", type=str, required=True)
     return parser.parse_args()
+
 
 def write_csv_header(csv_path: Path):
     with csv_path.open("w", newline="", encoding="utf-8") as f:
@@ -42,56 +33,101 @@ def write_csv_header(csv_path: Path):
             "lr",
         ])
 
+
 def append_csv_row(csv_path: Path, row: list):
     with csv_path.open("a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(row)  
+        writer.writerow(row)
+
+
+def build_optimizer(model, cfg: dict):
+    opt_cfg = cfg["optimizer"]
+    name = opt_cfg["name"].lower()
+
+    if name == "sgd":
+        return optim.SGD(
+            model.parameters(),
+            lr=opt_cfg["lr"],
+            momentum=opt_cfg.get("momentum", 0.9),
+            weight_decay=opt_cfg.get("weight_decay", 0.0),
+        )
+
+    if name == "adam":
+        return optim.Adam(
+            model.parameters(),
+            lr=opt_cfg["lr"],
+            weight_decay=opt_cfg.get("weight_decay", 0.0),
+        )
+
+    raise ValueError(f"Unsupported optimizer: {name}")
+
+
+def build_scheduler(optimizer, cfg: dict):
+    sch_cfg = cfg["scheduler"]
+    name = sch_cfg["name"].lower()
+
+    if name == "none":
+        return None
+
+    if name == "step":
+        return optim.lr_scheduler.StepLR(
+            optimizer,
+            step_size=sch_cfg.get("step_size", 10),
+            gamma=sch_cfg.get("gamma", 0.1),
+        )
+
+    if name == "cosine":
+        t_max = sch_cfg.get("t_max") or cfg["train"]["epochs"]
+        return optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=t_max)
+
+    raise ValueError(f"Unsupported scheduler: {name}")
+
 
 def main():
-    args=parse_args()
-    set_seed(args.seed)
+    args = parse_args()
+    cfg = load_config(args.config)
+    set_seed(cfg["seed"])
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_name = f"simple_cnn_baseline_{timestamp}"
-    run_dir = Path(args.output_dir) / run_name
+
+    base_run_name = cfg["run_name"] or cfg["model"]["name"]
+    run_name = f"{base_run_name}_{timestamp}"
+    run_dir = Path(cfg["train"]["output_dir"]) / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    args_path = run_dir / "args.json"
+    config_path = run_dir / "config.json"
     metrics_path = run_dir / "metrics.csv"
     best_checkpoint_path = run_dir / "best.pt"
     last_checkpoint_path = run_dir / "last.pt"
 
-    with args_path.open("w", encoding="utf-8") as f:
-        json.dump(vars(args), f, indent=2, ensure_ascii=False)
+    with config_path.open("w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
     write_csv_header(metrics_path)
 
-
     train_loader, val_loader, class_names = build_dataloaders(
-        data_dir=args.data_dir,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        data_aug=args.data_aug,
+        data_dir=cfg["data"]["data_dir"],
+        batch_size=cfg["data"]["batch_size"],
+        num_workers=cfg["data"]["num_workers"],
+        data_aug=cfg["data"]["data_aug"],
     )
 
-    model = SimpleCNN(num_classes=len(class_names))
-    model = model.to(device)
-
+    model = build_model(cfg["model"]["name"], num_classes=len(class_names)).to(device)
     criterion = nn.CrossEntropyLoss()
-
-    optimizer = optim.SGD(
-        model.parameters(),
-        lr=args.lr,
-        momentum=args.momentum,
-        weight_decay=args.weight_decay,
-    )
+    optimizer = build_optimizer(model, cfg)
+    scheduler = build_scheduler(optimizer, cfg)
 
     best_val_acc = 0.0
+    epochs = cfg["train"]["epochs"]
 
     print(f"Device: {device}")
     print(f"Run directory: {run_dir}")
     print(f"Classes: {class_names}")
-    for epoch in range(1, args.epochs + 1):
+    print(f"Model: {cfg['model']['name']}")
+    print(f"Optimizer: {cfg['optimizer']['name']}")
+    print(f"Scheduler: {cfg['scheduler']['name']}")
+
+    for epoch in range(1, epochs + 1):
         train_metrics = train_one_epoch(
             model=model,
             train_loader=train_loader,
@@ -119,28 +155,36 @@ def main():
             f"{current_lr:.8f}",
         ])
 
+        if val_metrics["acc"] > best_val_acc:
+            best_val_acc = val_metrics["acc"]
+            is_best = True
+        else:
+            is_best = False
+
         checkpoint_state = {
             "epoch": epoch,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
             "best_val_acc": best_val_acc,
-            "args": vars(args),
+            "config": cfg,
             "class_names": class_names,
         }
 
         save_checkpoint(checkpoint_state, str(last_checkpoint_path))
-
-        if val_metrics["acc"] > best_val_acc:
-            best_val_acc = val_metrics["acc"]
-            checkpoint_state["best_val_acc"] = best_val_acc
+        if is_best:
             save_checkpoint(checkpoint_state, str(best_checkpoint_path))
 
+        if scheduler is not None:
+            scheduler.step()
+
         print(
-            f"Epoch [{epoch:03d}/{args.epochs:03d}] "
+            f"Epoch [{epoch:03d}/{epochs:03d}] "
             f"train_loss={train_metrics['loss']:.4f} "
             f"train_acc={train_metrics['acc']:.4f} "
             f"val_loss={val_metrics['loss']:.4f} "
             f"val_acc={val_metrics['acc']:.4f} "
+            f"lr={current_lr:.6f} "
             f"best_val_acc={best_val_acc:.4f}"
         )
 
