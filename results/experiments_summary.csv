@@ -1,0 +1,8 @@
+experiment,status,output_dir,model,data_aug,label_noise_rate,optimizer,scheduler,epochs_completed,best_epoch,best_val_acc,best_val_acc_pct,last_train_acc,last_val_acc,train_val_gap,notes
+SimpleCNN Baseline,complete,outputs/simple_cnn_baseline_20260601_092437,simple_cnn,false,0.00,sgd,none,20,18,0.7933,79.33,0.8827,0.7660,0.1167,No augmentation baseline; final train-val gap shows overfitting.
+SimpleCNN + Aug,complete,outputs/simple_cnn_aug_20260601_100532,simple_cnn,true,0.00,sgd,none,20,19,0.7843,78.43,0.7847,0.7670,0.0177,Augmentation strongly reduces overfitting but does not maximize accuracy alone.
+SimpleCNN + Adam,complete,outputs/simple_cnn_adam_20260601_154819,simple_cnn,false,0.00,adam,none,20,17,0.7948,79.48,0.9226,0.7890,0.1336,Adam converges quickly but keeps a large generalization gap.
+SimpleCNN + StepLR,complete,outputs/simple_cnn_step_20260601_154958,simple_cnn,false,0.00,sgd,step,20,12,0.8180,81.80,0.9543,0.8153,0.1390,StepLR improves validation accuracy over no scheduler but still overfits.
+SimpleCNN + CosineLR,complete,outputs/simple_cnn_cosine_20260601_125946,simple_cnn,true,0.00,sgd,cosine,50,50,0.8679,86.79,0.8938,0.8679,0.0259,Best overall run; augmentation plus cosine schedule gives the strongest generalization.
+ResNet18 + CosineLR,complete,outputs/resnet18_cosine_20260601_172941,resnet18,true,0.00,sgd,cosine,20,19,0.8441,84.41,0.8760,0.7753,0.1007,Higher-capacity model reaches a strong peak but final validation accuracy drops.
+SimpleCNN + 10% Label Noise,complete,outputs/simple_cnn_label_noise_10_20260602_120640,simple_cnn,true,0.10,sgd,cosine,20,19,0.8245,82.45,0.7427,0.8238,-0.0811,10% noisy training labels reduce best validation accuracy by 4.34 percentage points versus the clean cosine run.

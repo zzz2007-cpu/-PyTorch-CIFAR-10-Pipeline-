@@ -1,14 +1,16 @@
-run_name: resnet18_cosine
+run_name: simple_cnn_label_noise_10
 seed: 42
 
 data:
   data_dir: ./datasets
   batch_size: 128
-  num_workers: 2
+  num_workers: 0
   data_aug: true
+  label_noise_rate: 0.10
+  label_noise_seed: 42
 
 model:
-  name: resnet18
+  name: simple_cnn
 
 train:
   epochs: 20
@@ -16,10 +18,10 @@ train:
 
 optimizer:
   name: sgd
-  lr: 0.1
+  lr: 0.05
   momentum: 0.9
   weight_decay: 0.0005
 
 scheduler:
   name: cosine
-  t_max: 100
+  t_max: 20

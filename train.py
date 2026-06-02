@@ -8,7 +8,7 @@ import torch
 from torch import nn, optim
 
 from data.cifar10 import build_dataloaders
-from engine.checkpoint import save_checkpoint
+from engine.checkpoint import load_checkpoint, save_checkpoint
 from engine.trainer import evaluate, train_one_epoch
 from models.factory import build_model
 from utils.config import load_config
@@ -18,6 +18,7 @@ from utils.seed import set_seed
 def parse_args():
     parser = argparse.ArgumentParser(description="Train CIFAR-10 classifier")
     parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
     return parser.parse_args()
 
 
@@ -89,11 +90,15 @@ def main():
     set_seed(cfg["seed"])
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     base_run_name = cfg["run_name"] or cfg["model"]["name"]
-    run_name = f"{base_run_name}_{timestamp}"
-    run_dir = Path(cfg["train"]["output_dir"]) / run_name
+    if args.resume:
+        resume_checkpoint_path = Path(args.resume)
+        run_dir = resume_checkpoint_path.parent
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_name = f"{base_run_name}_{timestamp}"
+        run_dir = Path(cfg["train"]["output_dir"]) / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
 
     config_path = run_dir / "config.json"
@@ -101,9 +106,12 @@ def main():
     best_checkpoint_path = run_dir / "best.pt"
     last_checkpoint_path = run_dir / "last.pt"
 
-    with config_path.open("w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
-    write_csv_header(metrics_path)
+    if not args.resume:
+        with config_path.open("w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+        write_csv_header(metrics_path)
+    elif not metrics_path.exists():
+        write_csv_header(metrics_path)
 
     train_loader, val_loader, class_names = build_dataloaders(
         data_dir=cfg["data"]["data_dir"],
@@ -119,17 +127,32 @@ def main():
     optimizer = build_optimizer(model, cfg)
     scheduler = build_scheduler(optimizer, cfg)
 
+    start_epoch = 1
     best_val_acc = 0.0
     epochs = cfg["train"]["epochs"]
 
+    if args.resume:
+        checkpoint = load_checkpoint(str(resume_checkpoint_path), device)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if scheduler is not None and checkpoint.get("scheduler_state_dict") is not None:
+            scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+            if not checkpoint.get("scheduler_stepped_after_save", False):
+                scheduler.step()
+        best_val_acc = checkpoint.get("best_val_acc", 0.0)
+        start_epoch = checkpoint["epoch"] + 1
+
     print(f"Device: {device}")
     print(f"Run directory: {run_dir}")
+    if args.resume:
+        print(f"Resumed from: {resume_checkpoint_path}")
+        print(f"Continuing from epoch {start_epoch} to {epochs}")
     print(f"Classes: {class_names}")
     print(f"Model: {cfg['model']['name']}")
     print(f"Optimizer: {cfg['optimizer']['name']}")
     print(f"Scheduler: {cfg['scheduler']['name']}")
 
-    for epoch in range(1, epochs + 1):
+    for epoch in range(start_epoch, epochs + 1):
         train_metrics = train_one_epoch(
             model=model,
             train_loader=train_loader,
@@ -163,11 +186,15 @@ def main():
         else:
             is_best = False
 
+        if scheduler is not None:
+            scheduler.step()
+
         checkpoint_state = {
             "epoch": epoch,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
+            "scheduler_stepped_after_save": True,
             "best_val_acc": best_val_acc,
             "config": cfg,
             "class_names": class_names,
@@ -176,9 +203,6 @@ def main():
         save_checkpoint(checkpoint_state, str(last_checkpoint_path))
         if is_best:
             save_checkpoint(checkpoint_state, str(best_checkpoint_path))
-
-        if scheduler is not None:
-            scheduler.step()
 
         print(
             f"Epoch [{epoch:03d}/{epochs:03d}] "
